@@ -20,11 +20,6 @@ option casemap:none
 .code
 
 main:
-	
-
-	push 44h
-	push 44h
-	push 44h
 
 	push ebp
 	mov ebp, esp
@@ -45,9 +40,6 @@ endmloop:
 
 	mov esp, ebp
 	pop ebp
-	push 44h
-	push 44h
-	push 44h
 	ret
 endfile:
 end	main

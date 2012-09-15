@@ -14,12 +14,8 @@ _searchHandle		dd	0
 
 getNextFile proc
 
-	;;push ebp
-	;;mov ebp, esp
-
-	push 88h
-	push 88h
-	push 88h
+	push ebp
+	mov ebp, esp
 
 	sub esp, sizeof WIN32_FIND_DATA			;; WIN32_FIND_DATA buffer
 	mov ebx, esp							;; ebx points to the buffer
@@ -72,12 +68,8 @@ nullify:
 	add esp, sizeof WIN32_FIND_DATA
 
 finished:
-	mov esp, ebp
-	pop ebp
-
-	push 88h
-	push 88h
-	push 88h
+	;;mov esp, ebp
+	;;pop ebp
 
 	ret
 getNextFile endp
