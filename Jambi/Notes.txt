@@ -1,0 +1,3 @@
+-> file mapping : si le mapping est plus grand, taille du fichier augmente.
+CreateFileMapping
+MapViewOfFile
