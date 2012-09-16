@@ -1,3 +1,8 @@
 -> file mapping : si le mapping est plus grand, taille du fichier augmente.
 CreateFileMapping
 MapViewOfFile
+
+
+-> recuperer header PE de la dll kernel32
+-> a partir de cette adresse, choper table d'export et chacune des fonctions à utiliser
+-> call adresse fonction + base adresse kernel32
