@@ -6,3 +6,7 @@ MapViewOfFile
 -> recuperer header PE de la dll kernel32
 -> a partir de cette adresse, choper table d'export et chacune des fonctions à utiliser
 -> call adresse fonction + base adresse kernel32
+
+-> table d'export : les methodes definies dans la dll et que le programme qui la hook peut appeler
+-> table d'import : méthodes définies dans l'application, déclarées import dans les headers de la dll. La dll peut appeler ces méthodes de l'appli mere.
+	dans kernel32, les methodes sont dans la table d'export.

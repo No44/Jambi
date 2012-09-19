@@ -21,9 +21,26 @@ option casemap:none
 
 main:
 
-	push ebp
-	mov ebp, esp
+extractKernel32PEHeader proc delta:dword
 
+	and delta, 0FFFF0000h
+l1:
+	sub delta, 1000h
+	cmp word ptr [delta], "MZ"
+	jne l1
+
+	mov eax, [delta + sizeof IMAGE_DOS_HEADER]
+	cmp word ptr [eax], "PE"
+	je return
+	xor eax, eax
+
+return:
+	ret
+extractKernel32PEHeader endp
+
+
+	mov ebx, [esp]
+	invoke extractKernel32PEHeader, ebx
 	xor eax, eax
 
 mloop:
