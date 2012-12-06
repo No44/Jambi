@@ -690,9 +690,8 @@ __getcur0:
 	mov eax, sectionSize
 	add [edi].SizeOfRawData, eax
 
-	mov eax, codeSize
 	;add [ebx].OptionalHeader.SizeOfImage, eax
-	add [ebx].OptionalHeader.SizeOfImage, 01000h
+	addloc [ebx].OptionalHeader.SizeOfImage, sectionSize
 	add [edi].Misc.VirtualSize, eax
 
 	; END SCRAT
